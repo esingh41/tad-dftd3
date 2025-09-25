@@ -81,6 +81,8 @@ def dftd3(
     positions: Tensor,
     param: dict[str, Tensor],
     *,
+    mon_A_indices=None,
+    mon_B_indices=None,
     ref: Reference | None = None,
     rcov: Tensor | None = None,
     rvdw: Tensor | None = None,
@@ -126,7 +128,7 @@ def dftd3(
         Atom-resolved DFT-D3 dispersion energy for each geometry.
     """
     dd: DD = {"device": positions.device, "dtype": positions.dtype}
-
+    
     if not is_functorch_tensor(numbers):
         if torch.max(numbers) >= defaults.MAX_ELEMENT:
             raise ValueError(
@@ -156,6 +158,8 @@ def dftd3(
     return dispersion(
         numbers,
         positions,
+        mon_A_indices,
+        mon_B_indices,
         param,
         c6,
         rvdw,
@@ -168,6 +172,8 @@ def dftd3(
 def dispersion(
     numbers: Tensor,
     positions: Tensor,
+    mon_A_indices,
+    mon_B_indices,
     param: dict[str, Tensor],
     c6: Tensor,
     rvdw: Tensor | None = None,
@@ -227,8 +233,9 @@ def dispersion(
 
     # two-body dispersion
     energy = dispersion2(
-        numbers, positions, param, c6, r4r2, damping_function, cutoff, **kwargs
+        numbers, positions, mon_A_indices, mon_B_indices, param, c6, r4r2, damping_function, cutoff,  **kwargs
     )
+    print("GOT to the dispersion() method")
 
     # three-body dispersion
     if "s9" in param and param["s9"] != 0.0:
@@ -245,6 +252,8 @@ def dispersion(
 def dispersion2(
     numbers: Tensor,
     positions: Tensor,
+    mon_A_indices,
+    mon_B_indices,
     param: dict[str, Tensor],
     c6: Tensor,
     r4r2: Tensor,
@@ -273,7 +282,8 @@ def dispersion2(
     """
     dd: DD = {"device": positions.device, "dtype": positions.dtype}
 
-    mask = real_pairs(numbers, mask_diagonal=True)
+    print("Got to dispersion 2 method")
+    mask = real_pairs(numbers, mask_diagonal=True, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices)
     distances = torch.where(
         mask,
         storch.cdist(positions, positions, p=2),
