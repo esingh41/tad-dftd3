@@ -323,7 +323,8 @@ def test_batch_apnet_vs_tad_inter():
     mon_A_indices = mctc.batch.pack(tuple(mon_A_indices))
     mon_B_indices = mctc.batch.pack(tuple(mon_B_indices))
 
-    apnet_intermolecular_disp_E = torch.sum(d3.dftd3(Z_AB, R_AB, param, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices), dim=-1)
+    apnet_intermolecular_disp_E = torch.sum(d3.dftd3(Z_AB, R_AB, param, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices, pairwise_matrix=True), dim=(1,2)
+                                            )
     apnet_intermolecular_disp_E = apnet_intermolecular_disp_E * h2kcalmol
     print(f"{apnet_intermolecular_disp_E = }")
 
