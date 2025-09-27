@@ -235,7 +235,6 @@ def dispersion(
     energy = dispersion2(
         numbers, positions, mon_A_indices, mon_B_indices, param, c6, r4r2, damping_function, cutoff,  **kwargs
     )
-    print("GOT to the dispersion() method")
 
     # three-body dispersion
     if "s9" in param and param["s9"] != 0.0:
@@ -282,7 +281,6 @@ def dispersion2(
     """
     dd: DD = {"device": positions.device, "dtype": positions.dtype}
 
-    print("Got to dispersion 2 method")
     mask = real_pairs(numbers, mask_diagonal=True, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices)
     distances = torch.where(
         mask,
@@ -304,8 +302,15 @@ def dispersion2(
         torch.tensor(0.0, **dd),
     )
 
+    print((t6.shape))
+    print(t6[1])
+    torch.set_printoptions(precision=4)
+    print(mask[1])
+    print(mask[1][mon_A_indices[1], :])
+    print(mon_A_indices[1])
+    print(t6[1][mask[1]])
     e6 = -0.5 * torch.sum(c6 * t6, dim=-1)
-    e8 = -0.5 * torch.sum(c8 * t8, dim=-1)
+    e8 = -0.5 * torch.sum(c8 * t8, dim=-1)        
 
     s6 = param.get("s6", torch.tensor(defaults.S6, **dd))
     s8 = param.get("s8", torch.tensor(defaults.S8, **dd))
