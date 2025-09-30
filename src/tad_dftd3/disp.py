@@ -91,6 +91,7 @@ def dftd3(
     counting_function: CountingFunction = ncoord.exp_count,
     weighting_function: WeightingFunction = model.gaussian_weight,
     damping_function: DampingFunction = rational_damping,
+    pairwise_matrix=False,
     chunk_size: int | None = None,
 ) -> Tensor:
     """
@@ -166,6 +167,7 @@ def dftd3(
         r4r2,
         damping_function,
         cutoff=cutoff,
+        pairwise_matrix=pairwise_matrix
     )
 
 
@@ -180,6 +182,7 @@ def dispersion(
     r4r2: Tensor | None = None,
     damping_function: DampingFunction = rational_damping,
     cutoff: Tensor | None = None,
+    pairwise_matrix=False,
     **kwargs: Any,
 ) -> Tensor:
     """
@@ -233,7 +236,7 @@ def dispersion(
 
     # two-body dispersion
     energy = dispersion2(
-        numbers, positions, mon_A_indices, mon_B_indices, param, c6, r4r2, damping_function, cutoff,  **kwargs
+        numbers, positions, mon_A_indices, mon_B_indices, param, c6, r4r2, damping_function, cutoff, pairwise_matrix,  **kwargs
     )
 
     # three-body dispersion
@@ -258,6 +261,7 @@ def dispersion2(
     r4r2: Tensor,
     damping_function: DampingFunction,
     cutoff: Tensor,
+    pairwise_matrix=False,
     **kwargs: Any,
 ) -> Tensor:
     """
@@ -302,18 +306,31 @@ def dispersion2(
         torch.tensor(0.0, **dd),
     )
 
-    print((t6.shape))
-    print(t6[1])
+
     torch.set_printoptions(precision=4)
-    print(mask[1])
-    print(mask[1][mon_A_indices[1], :])
-    print(mon_A_indices[1])
-    print(t6[1][mask[1]])
-    e6 = -0.5 * torch.sum(c6 * t6, dim=-1)
-    e8 = -0.5 * torch.sum(c8 * t8, dim=-1)        
+    print(t6[mask])
+    
+
+    #Adding so returns pairwise matrices and not sums, well it's all gonna be 23 by 23
+    #Only way batching works, but I can apply a mask, to post_process
+
+    if mon_A_indices is not None and mon_B_indices is not None:
+        e6 = -1 * torch.sum(c6 * t6, dim=-1)
+        e8 = -1 * torch.sum(c8 * t8, dim=-1)        
+    else: 
+        e6 = -0.5 * torch.sum(c6 * t6, dim=-1)
+        e8 = -0.5 * torch.sum(c8 * t8, dim=-1)        
 
     s6 = param.get("s6", torch.tensor(defaults.S6, **dd))
     s8 = param.get("s8", torch.tensor(defaults.S8, **dd))
+
+    if pairwise_matrix and mon_A_indices is not None and mon_B_indices is not None:
+        e6 = -1 * (c6 * t6) * s6
+        print("got here")
+        print(e6)
+        e8 = -1 * (c8 * t8) * s8
+        return e6 + e8
+    
     return s6 * e6 + s8 * e8
 
 
