@@ -185,3 +185,7 @@ cython_debug/
 # Directories
 /build*/
 /_*/
+
+
+*.pkl
+*.csv
