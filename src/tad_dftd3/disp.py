@@ -308,15 +308,14 @@ def dispersion2(
 
 
     torch.set_printoptions(precision=4)
-    print(t6[mask])
     
 
     #Adding so returns pairwise matrices and not sums, well it's all gonna be 23 by 23
     #Only way batching works, but I can apply a mask, to post_process
 
     if mon_A_indices is not None and mon_B_indices is not None:
-        e6 = -1 * torch.sum(c6 * t6, dim=-1)
-        e8 = -1 * torch.sum(c8 * t8, dim=-1)        
+        e6 = -0.5 * torch.sum(c6 * t6, dim=-1)
+        e8 = -0.5 * torch.sum(c8 * t8, dim=-1)        
     else: 
         e6 = -0.5 * torch.sum(c6 * t6, dim=-1)
         e8 = -0.5 * torch.sum(c8 * t8, dim=-1)        
@@ -325,11 +324,10 @@ def dispersion2(
     s8 = param.get("s8", torch.tensor(defaults.S8, **dd))
 
     if pairwise_matrix and mon_A_indices is not None and mon_B_indices is not None:
-        e6 = -1 * (c6 * t6) * s6
-        print("got here")
-        print(e6)
-        e8 = -1 * (c8 * t8) * s8
-        return e6 + e8
+        e6 = -0.5 * (c6 * t6) * s6
+        #print(e6)
+        e8 = -0.5 * (c8 * t8) * s8
+        return e6 + e8, mask
     
     return s6 * e6 + s8 * e8
 
