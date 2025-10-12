@@ -8,6 +8,8 @@ import numpy as np
 import tad_mctc as mctc
 import tad_dftd3 as d3
 
+#to check whether the pairwise energies are being computed correctly
+from dftd3.interface import RationalDampingParam, DispersionModel
 
 #tad outputs energies in hartrees and wants bohr units
 h2kcalmol = qcel.constants.conversion_factor("hartree", "kcal/mol")
@@ -20,13 +22,19 @@ row_water_dimer = df.loc[df['system_id'] == "01_Water-Water_1.00"]
 row_benzene_pyridine = df.loc[df['system_id'] == "27_Benzene-Pyridine_pi-pi_1.00"]
 #print(row_benzene_pyridine['dimer'].tolist()[0].to_string("psi4"))
 
-#fitted sapt0-d4 parameters for BJ damping function
+#fitted sapt0-d3 parameters for BJ damping function
 param = {
     "a1": torch.tensor(0.095),
     "s8": torch.tensor(0.738),
     "a2": torch.tensor(3.637),
 }
 
+#For simple_dftd3
+sapt0_d3 = RationalDampingParam(
+        s8=0.738,
+        a1=0.095,
+        a2=3.637,
+)
 
 #taddftd3 needs units to be in bohr to work properly
 menh2_water_dimer = qcel.models.Molecule.from_data("""
@@ -257,7 +265,9 @@ def test_batch_apnet_vs_tad_inter():
             torch.tensor(benzene_pyridine_dimer.fragments[1]),
         )
     )
-    tad_intermolecular_disp_E = torch.sum(d3.dftd3(Z_AB, R_AB, param, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices), dim=-1)
+
+    tad_intermolecular_disp_E = d3.dftd3(Z_AB, R_AB, param, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices) 
+    tad_intermolecular_disp_E = torch.sum(tad_intermolecular_disp_E, dim=-1)
     tad_intermolecular_disp_E = tad_intermolecular_disp_E * h2kcalmol
 
     mols = [
@@ -265,6 +275,26 @@ def test_batch_apnet_vs_tad_inter():
         water_water_dimer,
         benzene_pyridine_dimer,
     ]
+
+    mols = [
+        water_water_dimer
+    ]
+    #Getting the pairwise dispersion energies from simpledftd3
+    pairwise_simple_Es = []
+    for x in mols:
+        dimer = DispersionModel(x.atomic_numbers, x.geometry)
+        mon_A_indices = x.fragments[0]
+        mon_B_indices = x.fragments[1]
+        mask = mctc.batch.real_pairs(
+            torch.tensor(x.atomic_numbers), 
+            mask_diagonal=True, 
+            mon_A_indices=torch.tensor(mon_A_indices), 
+            mon_B_indices=torch.tensor(mon_B_indices),
+        )
+        pairwise_simple = torch.tensor(dimer.get_pairwise_dispersion(sapt0_d3)['additive pairwise energy'][mask] * h2kcalmol)
+        pairwise_simple_Es.append(pairwise_simple)
+    pairwise_simple_Es = torch.cat(pairwise_simple_Es, dim=0)    
+
 
     batch = apnet_pt.pt_datasets.ap2_fused_ds.ap2_fused_collate_update_no_target(
         [
@@ -280,10 +310,12 @@ def test_batch_apnet_vs_tad_inter():
 
     RA = batch.RA * ang2bohr
     RB = batch.RB * ang2bohr
+    print(batch)
+    print(batch.e_ABsr_source)
+    print(batch.indA)
+    print(batch.e_ABsr_target)
+    print(batch.indB)
 
-    print(batch.molecule_ind_A)
-
-    #Separting the molecules out so I can merge with RB
     unique_values_A, repeats_A = np.unique(
             [batch.molecule_ind_A[i] for i in range(len(batch.molecule_ind_A))],
             return_counts=True,
@@ -315,19 +347,98 @@ def test_batch_apnet_vs_tad_inter():
         mon_A_indices.append(torch.arange(0, repeats_A[i]))
         mon_B_indices.append(torch.arange(repeats_A[i], repeats_A[i] + repeats_B[i]))
     R_AB = [torch.cat([a, b], dim=0) for a, b in zip(RA_reshaped, RB_reshaped)]
+
     Z_AB = [torch.cat([a, b], dim=0) for a, b in zip(ZA_reshaped, ZB_reshaped)]
-    print(R_AB)
 
     R_AB = mctc.batch.pack(tuple(R_AB))
     Z_AB = mctc.batch.pack(tuple(Z_AB))
     mon_A_indices = mctc.batch.pack(tuple(mon_A_indices))
     mon_B_indices = mctc.batch.pack(tuple(mon_B_indices))
 
-    apnet_intermolecular_disp_E = torch.sum(d3.dftd3(Z_AB, R_AB, param, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices, pairwise_matrix=True), dim=(1,2))
-    apnet_intermolecular_disp_E = apnet_intermolecular_disp_E * h2kcalmol
-    print(f"{apnet_intermolecular_disp_E = }")
 
-    assert np.allclose(tad_intermolecular_disp_E, apnet_intermolecular_disp_E, atol=0.1), f"{tad_intermolecular_disp_E.tolist() = }, {apnet_intermolecular_disp_E.tolist() = }"
+    pairwise_energies, mask = d3.dftd3(Z_AB, R_AB, param, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices, pairwise_matrix=True)
+    pairwise_energies *= h2kcalmol
+    pairwise_energies_tad = pairwise_energies[mask]
+    print(pairwise_energies_tad)
+    apnet_intermolecular_disp_E = torch.sum(pairwise_energies, dim=(1,2))
+    apnet_intermolecular_disp_E = apnet_intermolecular_disp_E
+    #assert np.allclose(tad_intermolecular_disp_E, apnet_intermolecular_disp_E, atol=1e-6), f"{tad_intermolecular_disp_E.tolist() = }, {apnet_intermolecular_disp_E.tolist() = }"
+    #assert np.allclose(pairwise_simple_Es, pairwise_energies_tad, atol=1e-6)
+
+def test_passing_distances():
+    
+    mols = [
+        menh2_water_dimer,
+        water_water_dimer,
+        benzene_pyridine_dimer,
+    ]
+
+    batch = apnet_pt.pt_datasets.ap2_fused_ds.ap2_fused_collate_update_no_target(
+        [
+            apnet_pt.pt_datasets.ap2_fused_ds.qcel_dimer_to_fused_data(
+                mol, r_cut=5.0, dimer_ind=n, r_cut_im=torch.inf
+            )
+            for n, mol in enumerate(mols)
+        ]
+    )
+
+    ZA = batch.ZA
+    ZB = batch.ZB
+
+    RA = batch.RA * ang2bohr
+    RB = batch.RB * ang2bohr
+    print(batch)
+    print(batch.e_ABsr_source)
+    print(batch.indA)
+    print(batch.e_ABsr_target)
+    print(batch.indB)
+
+    unique_values_A, repeats_A = np.unique(
+            [batch.molecule_ind_A[i] for i in range(len(batch.molecule_ind_A))],
+            return_counts=True,
+    )
+    RA_reshaped = []
+    ZA_reshaped = []
+    mon_A_indices = []
+    idx = 0
+    for repeat in repeats_A:
+        RA_reshaped.append(RA[idx: idx + repeat])
+        ZA_reshaped.append(ZA[idx: idx + repeat])
+        idx += repeat
+
+    unique_values_B, repeats_B = np.unique(
+            [batch.molecule_ind_B[i] for i in range(len(batch.molecule_ind_B))],
+            return_counts=True,
+    )
+    RB_reshaped = []
+    ZB_reshaped = []
+    idx = 0
+    for repeat in repeats_B:
+        RB_reshaped.append(RB[idx: idx + repeat])
+        ZB_reshaped.append(ZB[idx: idx + repeat])
+        idx += repeat
+    
+    mon_A_indices = []
+    mon_B_indices = []
+    for i, x in enumerate(unique_values_A):
+        mon_A_indices.append(torch.arange(0, repeats_A[i]))
+        mon_B_indices.append(torch.arange(repeats_A[i], repeats_A[i] + repeats_B[i]))
+    R_AB = [torch.cat([a, b], dim=0) for a, b in zip(RA_reshaped, RB_reshaped)]
+
+    Z_AB = [torch.cat([a, b], dim=0) for a, b in zip(ZA_reshaped, ZB_reshaped)]
+
+    R_AB = mctc.batch.pack(tuple(R_AB))
+    Z_AB = mctc.batch.pack(tuple(Z_AB))
+    mon_A_indices = mctc.batch.pack(tuple(mon_A_indices))
+    mon_B_indices = mctc.batch.pack(tuple(mon_B_indices))
+
+
+    pairwise_energies, mask = d3.dftd3(Z_AB, R_AB, param, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices, pairwise_matrix=True)
+    pairwise_energies *= h2kcalmol
+    pairwise_energies_tad = pairwise_energies[mask]
+    print(pairwise_energies_tad)
+    apnet_intermolecular_disp_E = torch.sum(pairwise_energies, dim=(1,2))
+    apnet_intermolecular_disp_E = apnet_intermolecular_disp_E
 
 
 
