@@ -315,8 +315,8 @@ def dispersion2(
 
     
     if mon_A_indices is not None and mon_B_indices is not None:
-        e6 = -0.5 * torch.sum(c6 * t6, dim=-1)
-        e8 = -0.5 * torch.sum(c8 * t8, dim=-1)        
+        e6 = -1 * torch.sum(c6 * t6, dim=-1)
+        e8 = -1 * torch.sum(c8 * t8, dim=-1)        
     else: 
         e6 = -0.5 * torch.sum(c6 * t6, dim=-1)
         e8 = -0.5 * torch.sum(c8 * t8, dim=-1)        
@@ -327,8 +327,8 @@ def dispersion2(
     #Not multiplying by 0.5 here because I adjusted the mask so it only returns AB
     #interactions, and no BA interactions so no double counting so no need to multiply by 0.5
     if pairwise_matrix and mon_A_indices is not None and mon_B_indices is not None:
-        e6 = (c6 * t6) * s6
-        e8 = (c8 * t8) * s8
+        e6 = -1 * (c6 * t6) * s6
+        e8 = -1 * (c8 * t8) * s8
         return e6 + e8, mask
     
     return s6 * e6 + s8 * e8
