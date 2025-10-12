@@ -92,6 +92,7 @@ def dftd3(
     weighting_function: WeightingFunction = model.gaussian_weight,
     damping_function: DampingFunction = rational_damping,
     pairwise_matrix=False,
+    distances=None,
     chunk_size: int | None = None,
 ) -> Tensor:
     """
@@ -167,7 +168,8 @@ def dftd3(
         r4r2,
         damping_function,
         cutoff=cutoff,
-        pairwise_matrix=pairwise_matrix
+        pairwise_matrix=pairwise_matrix,
+        distances=distances,
     )
 
 
@@ -183,6 +185,7 @@ def dispersion(
     damping_function: DampingFunction = rational_damping,
     cutoff: Tensor | None = None,
     pairwise_matrix=False,
+    distances=None,
     **kwargs: Any,
 ) -> Tensor:
     """
@@ -236,7 +239,7 @@ def dispersion(
 
     # two-body dispersion
     energy = dispersion2(
-        numbers, positions, mon_A_indices, mon_B_indices, param, c6, r4r2, damping_function, cutoff, pairwise_matrix,  **kwargs
+        numbers, positions, mon_A_indices, mon_B_indices, param, c6, r4r2, damping_function, cutoff, pairwise_matrix, distances, **kwargs
     )
 
     # three-body dispersion
@@ -262,6 +265,7 @@ def dispersion2(
     damping_function: DampingFunction,
     cutoff: Tensor,
     pairwise_matrix=False,
+    distances=None,
     **kwargs: Any,
 ) -> Tensor:
     """
@@ -284,7 +288,13 @@ def dispersion2(
         Additional arguments are passed through to the function.
     """
     dd: DD = {"device": positions.device, "dtype": positions.dtype}
+    
+    assert distances is not None and positions is not None
 
+    #wait lowkey wouldn't this all fail if I don't pass in numbers and stuff should I wrap in ifstatement,
+    #NO I must pass in atomic numbers because like how are we getting the C6 and stuff
+    #Oh yeah this is gonna require some thinking because distances is fine but I need to pass in Z_AB too 
+    #battle for another day I am afraid or like after the apnet stuff works
     mask = real_pairs(numbers, mask_diagonal=True, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices)
     distances = torch.where(
         mask,
@@ -306,6 +316,21 @@ def dispersion2(
         torch.tensor(0.0, **dd),
     )
 
+    #The APNet distances only contain intermolecular distances so like I really do not need the mask
+    #and this is the only difference really between the above t6 and t8 calculations. Though lowkey
+    #I could also achieve this by setting the mask to True right, so it takes all of distances?
+    #Will try later.
+    if distances is not None:
+        t6 = torch.where(
+            distances <= cutoff,
+            damping_function(6, distances, qq, param, **kwargs),
+            torch.tensor(0.0, **dd),
+        )
+        t8 = torch.where(
+            distances <= cutoff,
+            damping_function(8, distances, qq, param, **kwargs),
+            torch.tensor(0.0, **dd),
+        )
 
     torch.set_printoptions(precision=4)
     
