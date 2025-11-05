@@ -73,7 +73,7 @@ from .typing import (
     WeightingFunction,
 )
 
-__all__ = ["dftd3", "dispersion", "dispersion2", "dispersion3"]
+__all__ = ["dftd3", "dispersion", "dispersion2", "dispersion3", "apnet_dispersion"]
 
 
 def dftd3(
@@ -130,6 +130,18 @@ def dftd3(
     """
     dd: DD = {"device": positions.device, "dtype": positions.dtype}
     
+    print("GOT HERE TO THIS FILE")
+    #The apnet_dispersion call is the only thing I changed delete when done
+    print("Going through apnet dispersion call")
+    energy = apnet_dispersion(
+        numbers=numbers,
+        positions=positions,
+        param=param,
+        mon_A_indices=mon_A_indices,
+        mon_B_indices=mon_B_indices,
+        pairwise_matrix=True
+    )
+    return energy
     if not is_functorch_tensor(numbers):
         if torch.max(numbers) >= defaults.MAX_ELEMENT:
             raise ValueError(
@@ -250,6 +262,8 @@ def dispersion(
 
     return energy
 
+
+#Okay, so dispersion 2 is where the magic actually happens, oh right I pass in s8
 
 def dispersion2(
     numbers: Tensor,
@@ -377,3 +391,102 @@ def dispersion3(
     rs9 = rs9.type(positions.dtype).to(positions.device)
 
     return dispersion_atm(numbers, positions, c6, rvdw, cutoff, s9, rs9, alp)
+
+
+def apnet_dispersion(
+    numbers: Tensor,
+    positions: Tensor,
+    param: dict[str, Tensor],
+    *,
+    mon_A_indices=None,
+    mon_B_indices=None,
+    ref: Reference | None = None,
+    rcov: Tensor | None = None,
+    rvdw: Tensor | None = None,
+    r4r2: Tensor | None = None,
+    cutoff: Tensor | None = None,
+    counting_function: CountingFunction = ncoord.exp_count,
+    weighting_function: WeightingFunction = model.gaussian_weight,
+    damping_function: DampingFunction = rational_damping,
+    pairwise_matrix=False,
+    chunk_size: int | None = None,
+    **kwargs,
+
+):
+    dd: DD = {"device": positions.device, "dtype": positions.dtype}
+
+    if cutoff is None:
+        cutoff = torch.tensor(defaults.D3_DISP_CUTOFF, **dd)
+    if ref is None:
+        ref = Reference(**dd)
+    if rcov is None:
+        rcov = radii.COV_D3(**dd)[numbers]
+    if rvdw is None:
+        rvdw = radii.VDW_PAIRWISE(**dd)[
+            numbers.unsqueeze(-1), numbers.unsqueeze(-2)
+        ]
+    if r4r2 is None:
+        r4r2 = data.R4R2(**dd)[numbers]
+
+    if numbers.shape != positions.shape[:-1]:
+        raise ValueError(
+            "Shape of positions is not consistent with atomic numbers.",
+        )
+    if numbers.shape != r4r2.shape:
+        raise ValueError(
+            "Shape of expectation values is not consistent with atomic numbers.",
+        )
+
+    if not is_functorch_tensor(numbers):
+        if torch.max(numbers) >= defaults.MAX_ELEMENT:
+            raise ValueError(
+                f"No D3 parameters available for Z > {defaults.MAX_ELEMENT-1} "
+                f"({pse.Z2S[defaults.MAX_ELEMENT]})."
+            )
+    
+
+    #fractional coordination numbers computation encodes system dependent information
+    #Oh I see fractional coordination numbers used to compute weights, the weights ar then used to compute
+    #c6. That's how c6 coeffcients encode environmental information
+    cn = ncoord.cn_d3(
+        numbers, positions, counting_function=counting_function, rcov=rcov
+    )
+    print(cn)
+    weights = model.weight_references(numbers, cn, ref, weighting_function)
+    c6 = model.atomic_c6(numbers, weights, ref, chunk_size=chunk_size)
+
+    mask = real_pairs(numbers, mask_diagonal=True, mon_A_indices=mon_A_indices, mon_B_indices=mon_B_indices)
+    
+    distances = torch.where(
+        mask,
+        storch.cdist(positions, positions, p=2),
+        torch.tensor(torch.finfo(positions.dtype).eps, **dd),
+    )
+
+
+    qq = 3 * r4r2.unsqueeze(-1) * r4r2.unsqueeze(-2)
+    c8 = c6 * qq
+
+    t6 = torch.where(
+        mask * (distances <= cutoff),
+        damping_function(6, distances, qq, param, **kwargs),
+        torch.tensor(0.0, **dd),
+    )
+
+    t8 = torch.where(
+        mask * (distances <= cutoff),
+        damping_function(8, distances, qq, param, **kwargs),
+        torch.tensor(0.0, **dd),
+    )
+
+    s6 = param.get("s6", torch.tensor(defaults.S6, **dd))
+    s8 = param.get("s8", torch.tensor(defaults.S8, **dd))
+
+    #Not multiplying by 0.5 here because I adjusted the mask so it only returns AB
+    #interactions, and no BA interactions so no double counting so no need to multiply by 0.5
+    if pairwise_matrix and mon_A_indices is not None and mon_B_indices is not None:
+        e6 = -1 * (c6 * t6) * s6
+        e8 = -1 * (c8 * t8) * s8
+        return e6 + e8, mask
+    
+    return s6 * e6 + s8 * e8
