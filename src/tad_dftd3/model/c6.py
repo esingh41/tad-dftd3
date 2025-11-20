@@ -33,7 +33,7 @@ from tad_mctc.typing import Callable, Tensor
 
 from ..reference import Reference
 
-__all__ = ["atomic_c6"]
+__all__ = ["atomic_c6", "_atomic_c6_full_apnet"]
 
 
 # main entry point
@@ -215,6 +215,43 @@ def _atomic_c6_full(
 
     rc6 = reference.c6[numbers.unsqueeze(-1), numbers.unsqueeze(-2)]
     return _einsum(rc6, weights, weights)
+
+
+def _atomic_c6_full_apnet(
+    ZA,
+    ZB,
+    weights_A: Tensor,
+    weights_B: Tensor,
+    reference: Reference,
+) -> Tensor:
+    """
+    Calculation of atomic dispersion coefficients without chunking. Might cause
+    memory issues for very large systems.
+
+    Parameters
+    ----------
+    numbers : Tensor
+        The atomic numbers of the atoms in the system of shape `(..., nat)`.
+    weights : Tensor
+        Weights of all reference systems of shape `(..., nat, 7)`.
+    reference : Reference
+        Reference systems for D3 model. Contains the reference C6 coefficients
+        of shape `(..., nelements, nelements, 7, 7)`.
+
+    Returns
+    -------
+    Tensor
+        Atomic dispersion coefficients of shape `(..., nat, nat)`.
+    """
+    # NOTE: This old version creates large intermediate tensors and builds the
+    # full matrix before the sum reduction, which requires a lot of memory.
+    #
+    # gw = w.unsqueeze(-1).unsqueeze(-3) * w.unsqueeze(-2).unsqueeze(-4)
+    # c6 = torch.sum(torch.sum(torch.mul(gw, rc6), dim=-1), dim=-1)
+
+    rc6 = reference.c6[ZA.unsqueeze(-1), ZB.unsqueeze(-2)]
+    print(rc6)
+    return _einsum(rc6, weights_A, weights_B)
 
 
 def _atomic_c6_chunked(
